@@ -1,5 +1,9 @@
 # VOD Movie Fixer
 
+<p align="center">
+  <img src="images/logo.png" alt="VOD Movie Fixer logo" width="128" height="128">
+</p>
+
 Plugin per [Jellyfin](https://jellyfin.org) che corregge i film che il provider IPTV/VOD
 espone come "serie" con una sola stagione e un solo episodio.
 
@@ -31,13 +35,20 @@ che come film.
 
 ## Installazione
 
-Per ora manuale (nessun repository pubblico configurato):
+1. In Jellyfin: **Dashboard → Plugin → Repository → aggiungi repository**
+   con questo URL:
 
-1. Compila il plugin (vedi sotto).
-2. Copia `Jellyfin.Plugin.VodMovieFixer.dll` (da `./artifact`) e `meta.json` (dalla
-   cartella del progetto) in una cartella `plugins/VodMovieFixer_1.0.0.0/` dentro la
-   cartella dati di Jellyfin.
+   ```
+   https://raw.githubusercontent.com/HLabSolutions/jellyfin-vod-movie-fixer/main/manifest.json
+   ```
+
+2. Vai su **Catalogo**, cerca **VOD Movie Fixer**, installa.
 3. Riavvia il server.
+
+In alternativa, per un'installazione manuale: scarica lo zip dell'
+[ultima release](https://github.com/HLabSolutions/jellyfin-vod-movie-fixer/releases/latest)
+ed estrailo in `plugins/VodMovieFixer_<versione>/` nella cartella dati di Jellyfin,
+poi riavvia il server.
 
 ## Configurazione
 

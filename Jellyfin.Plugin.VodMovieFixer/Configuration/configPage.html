@@ -4,7 +4,7 @@
     <title>VOD Movie Fixer</title>
 </head>
 <body>
-    <div id="VodMovieFixerConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox,emby-select">
+    <div id="VodMovieFixerConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
         <div data-role="content">
             <div class="content-primary">
                 <form id="VodMovieFixerConfigForm">
@@ -17,12 +17,11 @@
                         </p>
                     </div>
 
-                    <div class="selectContainer">
-                        <label class="selectLabel" for="LibraryNames">Librerie da analizzare</label>
-                        <select is="emby-select" id="LibraryNames" name="LibraryNames" multiple="multiple"></select>
+                    <div class="verticalSection">
+                        <label class="checkboxListLabel">Librerie da analizzare</label>
+                        <div id="LibraryCheckboxes"></div>
                         <div class="fieldDescription">
-                            Seleziona una o più librerie Jellyfin da controllare (tieni premuto Ctrl / Cmd per
-                            selezionarne più di una). Se non selezioni nulla, il plugin non fa nulla.
+                            Spunta una o più librerie Jellyfin da controllare. Se non spunti nulla, il plugin non fa nulla.
                         </div>
                     </div>
 
@@ -116,31 +115,43 @@
                 }
 
                 function selectedLibraryNames() {
-                    var select = getPage().querySelector("#LibraryNames");
-                    return Array.prototype.slice.call(select.selectedOptions || [])
-                        .map(function (o) { return o.value; });
+                    var container = getPage().querySelector("#LibraryCheckboxes");
+                    return Array.prototype.slice.call(container.querySelectorAll("input[type=checkbox]:checked"))
+                        .map(function (input) { return input.value; });
                 }
 
-                function populateLibrarySelect(selectedNames) {
-                    var select = getPage().querySelector("#LibraryNames");
-                    select.innerHTML = "";
+                function populateLibraryCheckboxes(selectedNames) {
+                    var container = getPage().querySelector("#LibraryCheckboxes");
+                    container.innerHTML = "";
                     return ApiClient.getVirtualFolders().then(function (folders) {
-                        (folders || []).forEach(function (folder) {
-                            var option = document.createElement("option");
-                            option.value = folder.Name;
-                            option.textContent = folder.Name;
-                            if (selectedNames.indexOf(folder.Name) !== -1) {
-                                option.selected = true;
-                            }
+                        if (!folders || !folders.length) {
+                            container.textContent = "Nessuna libreria trovata sul server.";
+                            return;
+                        }
 
-                            select.appendChild(option);
+                        folders.forEach(function (folder) {
+                            var wrapper = document.createElement("div");
+                            wrapper.className = "checkboxContainer";
+
+                            var label = document.createElement("label");
+
+                            var input = document.createElement("input");
+                            input.setAttribute("is", "emby-checkbox");
+                            input.type = "checkbox";
+                            input.value = folder.Name;
+                            input.checked = selectedNames.indexOf(folder.Name) !== -1;
+
+                            var span = document.createElement("span");
+                            span.textContent = folder.Name;
+
+                            label.appendChild(input);
+                            label.appendChild(span);
+                            wrapper.appendChild(label);
+                            container.appendChild(wrapper);
                         });
                     }).catch(function (err) {
                         console.error("VodMovieFixer: impossibile caricare le librerie", err);
-                        var option = document.createElement("option");
-                        option.textContent = "Impossibile caricare l'elenco librerie";
-                        option.disabled = true;
-                        select.appendChild(option);
+                        container.textContent = "Impossibile caricare l'elenco librerie (vedi console del browser).";
                     });
                 }
 
@@ -224,7 +235,7 @@
                         page.querySelector("#TmdbApiKey").value = config.TmdbApiKey || "";
                         page.querySelector("#DryRun").checked = config.DryRun !== false;
                         page.querySelector("#RunAfterLibraryScan").checked = config.RunAfterLibraryScan === true;
-                        return populateLibrarySelect(selectedNames);
+                        return populateLibraryCheckboxes(selectedNames);
                     }).then(function () {
                         Dashboard.hideLoadingMsg();
                         return refreshLog();

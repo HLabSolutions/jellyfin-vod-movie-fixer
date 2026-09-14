@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/HLabSolutions/jellyfin-vod-movie-fixer/main/images/logo.png",
         "versions": [
             {
+                "version": "1.0.2.0",
+                "changelog": "Le librerie si selezionano ora con delle checkbox (una per libreria) invece che con una select multipla; la selezione spuntata resta salvata come prima.",
+                "targetAbi": "12.0.0.0",
+                "sourceUrl": "https://github.com/HLabSolutions/jellyfin-vod-movie-fixer/releases/download/v1.0.2.0/vodmoviefixer_1.0.2.0.zip",
+                "checksum": "b683f9bea95790209000a4104a4dd601",
+                "timestamp": "2026-09-14T15:22:15Z"
+            },
+            {
                 "version": "1.0.1.0",
                 "changelog": "Pagina di configurazione: selezione librerie da un elenco (invece di digitarne il nome), pulsante 'Esegui ora' e riquadro con i log del plugin.",
                 "targetAbi": "12.0.0.0",

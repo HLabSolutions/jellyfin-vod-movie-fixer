@@ -1,0 +1,18 @@
+{
+    "category": "Library",
+    "changelog": "Prima versione.",
+    "description": "Individua le 'serie' con 1 sola stagione e 1 episodio esposte cosi' da alcuni provider VOD, le conferma su TMDb e le converte in film senza spostare i file .strm.",
+    "guid": "71f2ed82-5313-4a0a-977b-2d82982622f4",
+    "name": "VOD Movie Fixer",
+    "overview": "Converte in film le 'serie' con 1 sola stagione/episodio esposte cosi' da alcuni provider VOD",
+    "owner": "HLabSolutions",
+    "targetAbi": "12.0.0.0",
+    "timestamp": "2026-09-14T00:00:00Z",
+    "version": "1.0.0.0",
+    "status": 0,
+    "autoUpdate": true,
+    "imagePath": "logo.png",
+    "assemblies": [
+        "Jellyfin.Plugin.VodMovieFixer.dll"
+    ]
+}

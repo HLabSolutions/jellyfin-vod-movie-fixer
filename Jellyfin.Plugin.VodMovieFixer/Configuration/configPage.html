@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <title>VOD Movie Fixer</title>
+</head>
+<body>
+    <div id="VodMovieFixerConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="VodMovieFixerConfigForm">
+                    <div class="verticalSection">
+                        <h2>VOD Movie Fixer</h2>
+                        <p>
+                            Individua le "serie" con una sola stagione e un solo episodio (il modo in cui alcuni
+                            provider IPTV/VOD espongono i film), le conferma su TMDb e le converte in film
+                            senza spostare i file .strm.
+                        </p>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="LibraryNames">Librerie da analizzare</label>
+                        <input is="emby-input" type="text" id="LibraryNames" name="LibraryNames" />
+                        <div class="fieldDescription">
+                            Nomi esatti delle librerie Jellyfin da controllare, separati da virgola (es: "Serie TV, Serie TV 2").
+                            Se lasciato vuoto, il plugin non fa nulla.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="TmdbApiKey">API key TMDb (v3 auth)</label>
+                        <input is="emby-input" type="text" id="TmdbApiKey" name="TmdbApiKey" />
+                        <div class="fieldDescription">
+                            Usata solo per confermare se un titolo candidato è davvero un film. Si ottiene gratuitamente su
+                            themoviedb.org (Impostazioni account &gt; API).
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="DryRun" name="DryRun" />
+                            <span>Modalità simulazione (dry run)</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Se attiva, il plugin scrive nei log cosa convertirebbe senza modificare realmente la libreria.
+                            Consigliato tenerla attiva la prima volta, controllare i log, poi disattivarla.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="RunAfterLibraryScan" name="RunAfterLibraryScan" />
+                            <span>Esegui automaticamente dopo ogni scansione libreria</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Se attiva, la correzione parte da sola subito dopo che Jellyfin termina una scansione della libreria.
+                            In alternativa (o in aggiunta) puoi lanciare il task "Correggi film VOD classificati come serie"
+                            manualmente da Dashboard &gt; Programmazione attività.
+                        </div>
+                    </div>
+
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Salva</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script>
+            (function () {
+                var pluginId = "71f2ed82-5313-4a0a-977b-2d82982622f4";
+
+                function getPage() {
+                    return document.querySelector("#VodMovieFixerConfigPage");
+                }
+
+                document.querySelector("#VodMovieFixerConfigPage").addEventListener("pageshow", function () {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        var page = getPage();
+                        page.querySelector("#LibraryNames").value = config.LibraryNames || "";
+                        page.querySelector("#TmdbApiKey").value = config.TmdbApiKey || "";
+                        page.querySelector("#DryRun").checked = config.DryRun !== false;
+                        page.querySelector("#RunAfterLibraryScan").checked = config.RunAfterLibraryScan === true;
+                        Dashboard.hideLoadingMsg();
+                    });
+                });
+
+                document.querySelector("#VodMovieFixerConfigForm").addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    Dashboard.showLoadingMsg();
+                    var page = getPage();
+                    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        config.LibraryNames = page.querySelector("#LibraryNames").value;
+                        config.TmdbApiKey = page.querySelector("#TmdbApiKey").value;
+                        config.DryRun = page.querySelector("#DryRun").checked;
+                        config.RunAfterLibraryScan = page.querySelector("#RunAfterLibraryScan").checked;
+                        ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                            Dashboard.processPluginConfigurationUpdateResult(result);
+                        });
+                    });
+                    return false;
+                });
+            })();
+        </script>
+    </div>
+</body>
+</html>

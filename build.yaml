@@ -1,0 +1,22 @@
+---
+name: "VOD Movie Fixer"
+guid: "71f2ed82-5313-4a0a-977b-2d82982622f4"
+version: "1.0.0.0"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
+overview: "Converte in film le 'serie' con 1 sola stagione/episodio che alcuni provider VOD espongono come serie"
+description: >
+  Individua, nelle librerie configurate, le "serie" con esattamente una stagione e un episodio (il modo in
+  cui alcuni provider IPTV/VOD espongono i film), le conferma interrogando TMDb e sostituisce la voce
+  Series/Season/Episode con una voce Movie che punta allo stesso file .strm, senza mai spostare o
+  modificare il file fisico. Eseguibile on-demand da Dashboard > Programmazione attività, oppure
+  automaticamente al termine di ogni scansione libreria.
+category: "Library"
+owner: "HLabSolutions"
+imageUrl: "https://raw.githubusercontent.com/HLabSolutions/jellyfin-vod-movie-fixer/main/images/logo.png"
+artifacts:
+- "Jellyfin.Plugin.VodMovieFixer.dll"
+- "meta.json"
+- "logo.png"
+changelog: >
+  - 1.0.0.0: Prima versione.

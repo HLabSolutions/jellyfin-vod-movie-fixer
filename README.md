@@ -81,6 +81,11 @@ testo di ricerca, cercare su TMDb e scegliere con un click il film corretto tra 
 risultati: la conversione avviene subito, senza spostare il file `.strm`, e usa l'id TMDb
 scelto (non una nuova ricerca automatica) per recuperare i metadati corretti.
 
+La ricerca dei candidati interroga TMDb per ogni elemento e gira **in background sul
+server**: il pulsante avvia la ricerca e la pagina controlla lo stato a intervalli
+regolari finché non è finita (può richiedere qualche minuto su librerie grandi). Questo
+evita timeout lato browser o su eventuali reverse proxy davanti a Jellyfin.
+
 ## Limitazioni note
 
 - L'euristica TMDb (popolarità + somiglianza titolo) può sbagliare su titoli ambigui o

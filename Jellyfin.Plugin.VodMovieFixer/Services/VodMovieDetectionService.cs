@@ -21,8 +21,9 @@ namespace Jellyfin.Plugin.VodMovieFixer.Services;
 /// alcuni provider IPTV/VOD espongono i film), le conferma su TMDb e, se confermate, sostituisce la voce
 /// Series/Season/Episode nella libreria di Jellyfin con una voce Movie che punta allo stesso file .strm
 /// (il file fisico non viene mai spostato né toccato). Per i casi che il rilevamento automatico non riesce
-/// a confermare, espone <see cref="GetPendingCandidatesAsync"/> e <see cref="AssignMovieAsync"/> in modo
-/// che l'amministratore possa assegnare manualmente il film corretto dalla UI del plugin.
+/// a confermare, espone <see cref="StartCandidatesScan"/>/<see cref="GetCandidatesStatus"/> e
+/// <see cref="AssignMovieAsync"/> in modo che l'amministratore possa assegnare manualmente il film
+/// corretto dalla UI del plugin.
 /// </summary>
 public class VodMovieDetectionService
 {
@@ -31,6 +32,12 @@ public class VodMovieDetectionService
     private readonly IDirectoryService _directoryService;
     private readonly TmdbClient _tmdbClient;
     private readonly ILogger<VodMovieDetectionService> _logger;
+
+    private readonly object _candidatesStateLock = new();
+    private bool _candidatesScanRunning;
+    private DateTime? _candidatesUpdatedUtc;
+    private string? _candidatesError;
+    private IReadOnlyList<PendingCandidate> _candidatesCache = Array.Empty<PendingCandidate>();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="VodMovieDetectionService"/> class.
@@ -124,13 +131,79 @@ public class VodMovieDetectionService
     }
 
     /// <summary>
-    /// Ritorna le "serie" con 1 sola stagione/episodio per cui il rilevamento automatico su TMDb non ha
-    /// trovato (o non ha confermato) una corrispondenza come film, cosicché l'amministratore possa
-    /// assegnare manualmente il film corretto dalla UI del plugin.
+    /// Ritorna lo stato corrente della ricerca dei candidati da assegnare manualmente: se è in corso,
+    /// quando è stata completata l'ultima volta, ed eventualmente il risultato o l'errore. Non fa mai
+    /// chiamate a TMDb: legge solo un risultato tenuto in memoria, cosi' la chiamata HTTP risponde subito
+    /// (la ricerca vera e propria puo' richiedere minuti su librerie grandi e andrebbe altrimenti in
+    /// timeout su eventuali reverse proxy davanti a Jellyfin).
     /// </summary>
-    /// <param name="cancellationToken">Token di cancellazione.</param>
-    /// <returns>L'elenco dei candidati da rivedere manualmente.</returns>
-    public async Task<IReadOnlyList<PendingCandidate>> GetPendingCandidatesAsync(CancellationToken cancellationToken)
+    public CandidatesScanStatus GetCandidatesStatus()
+    {
+        lock (_candidatesStateLock)
+        {
+            return new CandidatesScanStatus
+            {
+                IsRunning = _candidatesScanRunning,
+                UpdatedUtc = _candidatesUpdatedUtc,
+                Error = _candidatesError,
+                Candidates = _candidatesCache
+            };
+        }
+    }
+
+    /// <summary>
+    /// Avvia in background la ricerca delle "serie" con 1 sola stagione/episodio per cui il rilevamento
+    /// automatico su TMDb non ha trovato (o non ha confermato) una corrispondenza come film. Il risultato
+    /// si legge poi con <see cref="GetCandidatesStatus"/>. Se una ricerca è già in corso non ne avvia
+    /// un'altra.
+    /// </summary>
+    /// <returns>True se è stata avviata una nuova ricerca, false se ce n'era già una in corso.</returns>
+    public bool StartCandidatesScan()
+    {
+        lock (_candidatesStateLock)
+        {
+            if (_candidatesScanRunning)
+            {
+                return false;
+            }
+
+            _candidatesScanRunning = true;
+            _candidatesError = null;
+        }
+
+        _ = RunCandidatesScanAsync();
+        return true;
+    }
+
+    private async Task RunCandidatesScanAsync()
+    {
+        try
+        {
+            var result = await ScanForPendingCandidatesAsync(CancellationToken.None).ConfigureAwait(false);
+            lock (_candidatesStateLock)
+            {
+                _candidatesCache = result;
+                _candidatesUpdatedUtc = DateTime.UtcNow;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ricerca dei candidati da assegnare manualmente fallita.");
+            lock (_candidatesStateLock)
+            {
+                _candidatesError = ex.Message;
+            }
+        }
+        finally
+        {
+            lock (_candidatesStateLock)
+            {
+                _candidatesScanRunning = false;
+            }
+        }
+    }
+
+    private async Task<IReadOnlyList<PendingCandidate>> ScanForPendingCandidatesAsync(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var folderIds = GetTargetFolderIds(config);
@@ -373,4 +446,30 @@ public class PendingCandidate
     /// Gets or sets il percorso del file .strm dell'unico episodio.
     /// </summary>
     public string EpisodePath { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Stato della ricerca (in background) dei candidati da assegnare manualmente.
+/// </summary>
+public class CandidatesScanStatus
+{
+    /// <summary>
+    /// Gets or sets a value indicating whether la ricerca è attualmente in corso.
+    /// </summary>
+    public bool IsRunning { get; set; }
+
+    /// <summary>
+    /// Gets or sets la data/ora (UTC) dell'ultima ricerca completata, se ce n'è stata una.
+    /// </summary>
+    public DateTime? UpdatedUtc { get; set; }
+
+    /// <summary>
+    /// Gets or sets il messaggio d'errore dell'ultima ricerca, se fallita.
+    /// </summary>
+    public string? Error { get; set; }
+
+    /// <summary>
+    /// Gets or sets l'elenco dei candidati trovati dall'ultima ricerca completata con successo.
+    /// </summary>
+    public IReadOnlyList<PendingCandidate> Candidates { get; set; } = Array.Empty<PendingCandidate>();
 }

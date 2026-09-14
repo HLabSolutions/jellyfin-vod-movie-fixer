@@ -31,14 +31,28 @@ public class VodMovieFixerController : ControllerBase
     }
 
     /// <summary>
-    /// Ritorna le "serie" con 1 sola stagione/episodio che il rilevamento automatico non ha confermato
-    /// come film, in attesa di assegnazione manuale.
+    /// Ritorna lo stato corrente della ricerca dei candidati da assegnare manualmente (in corso, ultimo
+    /// risultato o errore). Risponde subito: non fa chiamate a TMDb, legge solo l'ultimo risultato tenuto
+    /// in memoria dal server. Per avviare (o far ripartire) la ricerca vera e propria usa
+    /// <see cref="StartCandidatesScan"/>.
     /// </summary>
-    /// <param name="cancellationToken">Token di cancellazione.</param>
     [HttpGet("Candidates")]
-    public async Task<ActionResult<IReadOnlyList<PendingCandidate>>> GetCandidates(CancellationToken cancellationToken)
+    public ActionResult<CandidatesScanStatus> GetCandidates()
     {
-        return Ok(await _detectionService.GetPendingCandidatesAsync(cancellationToken).ConfigureAwait(false));
+        return Ok(_detectionService.GetCandidatesStatus());
+    }
+
+    /// <summary>
+    /// Avvia in background la ricerca dei candidati da assegnare manualmente. La ricerca interroga TMDb
+    /// per ogni "serie" con 1 sola stagione/episodio e può richiedere minuti su librerie grandi: per
+    /// questo non blocca la richiesta HTTP (evitando timeout su eventuali reverse proxy) ma gira in
+    /// background, e il risultato si legge poi con <see cref="GetCandidates"/>.
+    /// </summary>
+    [HttpPost("Candidates/Scan")]
+    public ActionResult StartCandidatesScan()
+    {
+        _detectionService.StartCandidatesScan();
+        return Accepted();
     }
 
     /// <summary>

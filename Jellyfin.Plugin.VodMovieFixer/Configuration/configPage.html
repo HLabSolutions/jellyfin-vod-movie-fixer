@@ -268,6 +268,7 @@
 
                 document.querySelector("#VodMovieFixerConfigPage").addEventListener("pagehide", function () {
                     stopPolling();
+                    stopCandidatesPolling();
                 });
 
                 document.querySelector("#VodMovieFixerConfigForm").addEventListener("submit", function (e) {
@@ -365,21 +366,71 @@
                     return Promise.resolve(parts.join(" — "));
                 }
 
+                var candidatesPollTimer = null;
+
+                function stopCandidatesPolling() {
+                    if (candidatesPollTimer) {
+                        clearInterval(candidatesPollTimer);
+                        candidatesPollTimer = null;
+                    }
+                }
+
                 function loadCandidates() {
                     var list = getPage().querySelector("#CandidatesList");
-                    list.textContent = "Ricerca candidati in corso... (interroga TMDb per ogni elemento, può richiedere qualche secondo)";
+                    list.textContent = "Avvio della ricerca in corso...";
+                    stopCandidatesPolling();
+
+                    // La ricerca interroga TMDb per ogni candidato e puo' richiedere minuti su librerie
+                    // grandi: la avviamo in background sul server (risposta HTTP immediata, cosi' non va
+                    // in timeout su eventuali reverse proxy davanti a Jellyfin) e poi controlliamo lo stato
+                    // a intervalli regolari finche' non e' finita.
                     return ApiClient.ajax({
-                        type: "GET",
-                        url: pluginUrl("VodMovieFixer/Candidates"),
-                        dataType: "json"
-                    }).then(function (candidates) {
-                        renderCandidates(candidates || []);
+                        type: "POST",
+                        url: pluginUrl("VodMovieFixer/Candidates/Scan")
+                    }).then(function () {
+                        pollCandidatesStatus();
                     }).catch(function (err) {
-                        console.error("VodMovieFixer: impossibile caricare i candidati", err);
+                        console.error("VodMovieFixer: impossibile avviare la ricerca candidati", err);
                         describeError(err).then(function (desc) {
-                            list.textContent = "Impossibile caricare i candidati — " + desc;
+                            list.textContent = "Impossibile avviare la ricerca — " + desc;
                         });
                     });
+                }
+
+                function pollCandidatesStatus() {
+                    var list = getPage().querySelector("#CandidatesList");
+
+                    function checkOnce() {
+                        return ApiClient.ajax({
+                            type: "GET",
+                            url: pluginUrl("VodMovieFixer/Candidates"),
+                            dataType: "json"
+                        }).then(function (status) {
+                            if (status.Error) {
+                                stopCandidatesPolling();
+                                list.textContent = "Ricerca fallita: " + status.Error;
+                                return;
+                            }
+
+                            if (status.IsRunning) {
+                                list.textContent = "Ricerca candidati in corso... (interroga TMDb per ogni elemento, può richiedere qualche minuto su librerie grandi)";
+                                return;
+                            }
+
+                            stopCandidatesPolling();
+                            renderCandidates(status.Candidates || []);
+                        }).catch(function (err) {
+                            stopCandidatesPolling();
+                            console.error("VodMovieFixer: impossibile controllare lo stato della ricerca", err);
+                            describeError(err).then(function (desc) {
+                                list.textContent = "Impossibile controllare lo stato della ricerca — " + desc;
+                            });
+                        });
+                    }
+
+                    stopCandidatesPolling();
+                    checkOnce();
+                    candidatesPollTimer = setInterval(checkOnce, 2500);
                 }
 
                 function renderCandidates(candidates) {

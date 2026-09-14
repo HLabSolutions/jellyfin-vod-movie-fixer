@@ -4,7 +4,7 @@
     <title>VOD Movie Fixer</title>
 </head>
 <body>
-    <div id="VodMovieFixerConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <div id="VodMovieFixerConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox,emby-select">
         <div data-role="content">
             <div class="content-primary">
                 <form id="VodMovieFixerConfigForm">
@@ -17,12 +17,12 @@
                         </p>
                     </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="LibraryNames">Librerie da analizzare</label>
-                        <input is="emby-input" type="text" id="LibraryNames" name="LibraryNames" />
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="LibraryNames">Librerie da analizzare</label>
+                        <select is="emby-select" id="LibraryNames" name="LibraryNames" multiple="multiple"></select>
                         <div class="fieldDescription">
-                            Nomi esatti delle librerie Jellyfin da controllare, separati da virgola (es: "Serie TV, Serie TV 2").
-                            Se lasciato vuoto, il plugin non fa nulla.
+                            Seleziona una o più librerie Jellyfin da controllare (tieni premuto Ctrl / Cmd per
+                            selezionarne più di una). Se non selezioni nulla, il plugin non fa nulla.
                         </div>
                     </div>
 
@@ -53,8 +53,6 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
                             Se attiva, la correzione parte da sola subito dopo che Jellyfin termina una scansione della libreria.
-                            In alternativa (o in aggiunta) puoi lanciare il task "Correggi film VOD classificati come serie"
-                            manualmente da Dashboard &gt; Programmazione attività.
                         </div>
                     </div>
 
@@ -64,26 +62,179 @@
                         </button>
                     </div>
                 </form>
+
+                <div class="verticalSection" style="margin-top:2em;">
+                    <h2>Esecuzione manuale</h2>
+                    <p class="fieldDescription">
+                        Avvia subito il task "Correggi film VOD classificati come serie" (equivale a lanciarlo da
+                        Dashboard &gt; Programmazione attività) e segui l'esito qui sotto, senza dover andare a
+                        recuperare i log altrove.
+                    </p>
+                    <div style="display:flex; align-items:center; gap:1em; flex-wrap:wrap;">
+                        <button is="emby-button" type="button" id="RunNowButton" class="raised button-submit emby-button">
+                            <span>Esegui ora</span>
+                        </button>
+                        <button is="emby-button" type="button" id="RefreshLogButton" class="raised emby-button">
+                            <span>Aggiorna log</span>
+                        </button>
+                        <span id="RunStatus" class="fieldDescription" style="margin:0;"></span>
+                    </div>
+
+                    <pre id="VodMovieFixerLog" style="
+                        margin-top:1em;
+                        max-height:320px;
+                        overflow-y:auto;
+                        white-space:pre-wrap;
+                        word-break:break-word;
+                        font-family:monospace;
+                        font-size:0.85em;
+                        padding:0.8em;
+                        border:1px solid rgba(128,128,128,0.4);
+                        border-radius:4px;
+                        background-color:rgba(128,128,128,0.08);
+                    ">Nessun log caricato. Premi "Aggiorna log" o "Esegui ora".</pre>
+                </div>
             </div>
         </div>
         <script>
             (function () {
                 var pluginId = "71f2ed82-5313-4a0a-977b-2d82982622f4";
+                var taskKey = "FixVodSeriesAsMovies";
+                var logMarker = "VodMovieFixer";
+                var pollTimer = null;
 
                 function getPage() {
                     return document.querySelector("#VodMovieFixerConfigPage");
+                }
+
+                function setStatus(text) {
+                    getPage().querySelector("#RunStatus").textContent = text || "";
+                }
+
+                function setLogText(text) {
+                    getPage().querySelector("#VodMovieFixerLog").textContent = text;
+                }
+
+                function selectedLibraryNames() {
+                    var select = getPage().querySelector("#LibraryNames");
+                    return Array.prototype.slice.call(select.selectedOptions || [])
+                        .map(function (o) { return o.value; });
+                }
+
+                function populateLibrarySelect(selectedNames) {
+                    var select = getPage().querySelector("#LibraryNames");
+                    select.innerHTML = "";
+                    return ApiClient.getVirtualFolders().then(function (folders) {
+                        (folders || []).forEach(function (folder) {
+                            var option = document.createElement("option");
+                            option.value = folder.Name;
+                            option.textContent = folder.Name;
+                            if (selectedNames.indexOf(folder.Name) !== -1) {
+                                option.selected = true;
+                            }
+
+                            select.appendChild(option);
+                        });
+                    }).catch(function (err) {
+                        console.error("VodMovieFixer: impossibile caricare le librerie", err);
+                        var option = document.createElement("option");
+                        option.textContent = "Impossibile caricare l'elenco librerie";
+                        option.disabled = true;
+                        select.appendChild(option);
+                    });
+                }
+
+                function findOurTask() {
+                    return ApiClient.getScheduledTasks().then(function (tasks) {
+                        return (tasks || []).filter(function (t) { return t.Key === taskKey; })[0];
+                    });
+                }
+
+                function refreshLog() {
+                    setLogText("Caricamento log in corso...");
+                    return ApiClient.getJSON(ApiClient.getUrl("System/Logs")).then(function (files) {
+                        if (!files || !files.length) {
+                            setLogText("Nessun file di log trovato sul server.");
+                            return;
+                        }
+
+                        files.sort(function (a, b) {
+                            return new Date(b.DateModified) - new Date(a.DateModified);
+                        });
+                        var latest = files[0].Name;
+
+                        return ApiClient.ajax({
+                            type: "GET",
+                            url: ApiClient.getUrl("System/Logs/Log", { name: latest }),
+                            dataType: "text"
+                        }).then(function (text) {
+                            var lines = (text || "").split(/\r?\n/).filter(function (line) {
+                                return line.indexOf(logMarker) !== -1;
+                            });
+                            var tail = lines.slice(-200);
+                            setLogText(tail.length ? tail.join("\n") : "Nessuna riga di log del plugin trovata in '" + latest + "'.");
+                        });
+                    }).catch(function (err) {
+                        console.error("VodMovieFixer: impossibile leggere i log", err);
+                        setLogText("Impossibile recuperare i log dal server (vedi console del browser).");
+                    });
+                }
+
+                function stopPolling() {
+                    if (pollTimer) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                    }
+                }
+
+                function pollUntilIdle() {
+                    stopPolling();
+                    var elapsedMs = 0;
+                    var maxMs = 120000;
+                    pollTimer = setInterval(function () {
+                        elapsedMs += 2000;
+                        findOurTask().then(function (task) {
+                            if (!task) {
+                                stopPolling();
+                                return;
+                            }
+
+                            if (task.State === "Idle") {
+                                stopPolling();
+                                setStatus("Completato.");
+                                refreshLog();
+                                return;
+                            }
+
+                            setStatus("In esecuzione... (" + (task.CurrentProgressPercentage != null ? Math.round(task.CurrentProgressPercentage) + "%" : task.State) + ")");
+
+                            if (elapsedMs >= maxMs) {
+                                stopPolling();
+                                setStatus("Il task è ancora in esecuzione, aggiorna manualmente il log tra poco.");
+                            }
+                        });
+                    }, 2000);
                 }
 
                 document.querySelector("#VodMovieFixerConfigPage").addEventListener("pageshow", function () {
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                         var page = getPage();
-                        page.querySelector("#LibraryNames").value = config.LibraryNames || "";
+                        var selectedNames = (config.LibraryNames || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
                         page.querySelector("#TmdbApiKey").value = config.TmdbApiKey || "";
                         page.querySelector("#DryRun").checked = config.DryRun !== false;
                         page.querySelector("#RunAfterLibraryScan").checked = config.RunAfterLibraryScan === true;
+                        return populateLibrarySelect(selectedNames);
+                    }).then(function () {
+                        Dashboard.hideLoadingMsg();
+                        return refreshLog();
+                    }).catch(function () {
                         Dashboard.hideLoadingMsg();
                     });
+                });
+
+                document.querySelector("#VodMovieFixerConfigPage").addEventListener("pagehide", function () {
+                    stopPolling();
                 });
 
                 document.querySelector("#VodMovieFixerConfigForm").addEventListener("submit", function (e) {
@@ -91,7 +242,7 @@
                     Dashboard.showLoadingMsg();
                     var page = getPage();
                     ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                        config.LibraryNames = page.querySelector("#LibraryNames").value;
+                        config.LibraryNames = selectedLibraryNames().join(",");
                         config.TmdbApiKey = page.querySelector("#TmdbApiKey").value;
                         config.DryRun = page.querySelector("#DryRun").checked;
                         config.RunAfterLibraryScan = page.querySelector("#RunAfterLibraryScan").checked;
@@ -100,6 +251,34 @@
                         });
                     });
                     return false;
+                });
+
+                document.querySelector("#RunNowButton").addEventListener("click", function () {
+                    setStatus("Avvio in corso...");
+                    findOurTask().then(function (task) {
+                        if (!task) {
+                            setStatus("Task non trovato: riavvia il server dopo l'installazione del plugin.");
+                            return;
+                        }
+
+                        if (task.State !== "Idle") {
+                            setStatus("Il task è già in esecuzione.");
+                            pollUntilIdle();
+                            return;
+                        }
+
+                        ApiClient.startScheduledTask(task.Id).then(function () {
+                            setStatus("In esecuzione...");
+                            pollUntilIdle();
+                        }).catch(function (err) {
+                            console.error("VodMovieFixer: impossibile avviare il task", err);
+                            setStatus("Impossibile avviare il task (vedi console del browser).");
+                        });
+                    });
+                });
+
+                document.querySelector("#RefreshLogButton").addEventListener("click", function () {
+                    refreshLog();
                 });
             })();
         </script>

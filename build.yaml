@@ -1,7 +1,7 @@
 ---
 name: "VOD Movie Fixer"
 guid: "71f2ed82-5313-4a0a-977b-2d82982622f4"
-version: "1.0.3.0"
+version: "1.0.4.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Converte in film le 'serie' con 1 sola stagione/episodio che alcuni provider VOD espongono come serie"
@@ -19,6 +19,10 @@ artifacts:
 - "meta.json"
 - "logo.png"
 changelog: >
+  - 1.0.4.0: Gli errori delle chiamate (Esegui ora, log, candidati, ricerca/assegnazione
+    TMDb) vengono ora mostrati per esteso direttamente in pagina, senza dover aprire la
+    console del browser. Corretto anche un caso in cui un errore nel recupero dei task
+    rendeva "Esegui ora" silenzioso.
   - 1.0.3.0: Aggiunta l'assegnazione manuale: per i candidati che TMDb non conferma
     automaticamente, la pagina del plugin permette ora di cercarli e assegnarli uno per uno.
   - 1.0.2.0: Le librerie si selezionano ora con delle checkbox (una per libreria)

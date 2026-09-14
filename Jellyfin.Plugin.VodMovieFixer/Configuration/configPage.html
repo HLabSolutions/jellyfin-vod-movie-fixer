@@ -203,7 +203,9 @@
                         });
                     }).catch(function (err) {
                         console.error("VodMovieFixer: impossibile leggere i log", err);
-                        setLogText("Impossibile recuperare i log dal server (vedi console del browser).");
+                        describeError(err).then(function (desc) {
+                            setLogText("Impossibile recuperare i log dal server — " + desc);
+                        });
                     });
                 }
 
@@ -255,8 +257,12 @@
                     }).then(function () {
                         Dashboard.hideLoadingMsg();
                         return refreshLog();
-                    }).catch(function () {
+                    }).catch(function (err) {
                         Dashboard.hideLoadingMsg();
+                        console.error("VodMovieFixer: errore durante il caricamento della pagina", err);
+                        describeError(err).then(function (desc) {
+                            setStatus("Errore durante il caricamento della pagina — " + desc);
+                        });
                     });
                 });
 
@@ -299,7 +305,14 @@
                             pollUntilIdle();
                         }).catch(function (err) {
                             console.error("VodMovieFixer: impossibile avviare il task", err);
-                            setStatus("Impossibile avviare il task (vedi console del browser).");
+                            describeError(err).then(function (desc) {
+                                setStatus("Impossibile avviare il task — " + desc);
+                            });
+                        });
+                    }).catch(function (err) {
+                        console.error("VodMovieFixer: impossibile recuperare l'elenco dei task", err);
+                        describeError(err).then(function (desc) {
+                            setStatus("Impossibile recuperare l'elenco dei task — " + desc);
                         });
                     });
                 });
@@ -310,6 +323,46 @@
 
                 function pluginUrl(path, params) {
                     return ApiClient.getUrl(path, params);
+                }
+
+                // Estrae quante piu' informazioni possibile da un errore di ApiClient.ajax (che puo'
+                // rigettare con forme diverse a seconda della versione: Response fetch, oggetto XHR-like,
+                // stringa...) cosi' l'errore vero si vede direttamente in pagina, senza dover aprire la
+                // console del browser.
+                function describeError(err) {
+                    if (!err) {
+                        return Promise.resolve("Errore sconosciuto (nessun dettaglio disponibile).");
+                    }
+
+                    if (typeof err === "string") {
+                        return Promise.resolve(err);
+                    }
+
+                    if (typeof err.text === "function") {
+                        return err.text().then(function (text) {
+                            var statusPart = "HTTP " + err.status + (err.statusText ? " " + err.statusText : "");
+                            return text ? statusPart + " — " + text : statusPart;
+                        }).catch(function () {
+                            return "HTTP " + err.status + (err.statusText ? " " + err.statusText : "");
+                        });
+                    }
+
+                    var parts = [];
+                    if (err.status !== undefined) {
+                        parts.push("HTTP " + err.status + (err.statusText ? " " + err.statusText : ""));
+                    }
+
+                    if (err.responseText) {
+                        parts.push(err.responseText);
+                    } else if (err.message) {
+                        parts.push(err.message);
+                    }
+
+                    if (!parts.length) {
+                        try { parts.push(JSON.stringify(err)); } catch (e) { parts.push(String(err)); }
+                    }
+
+                    return Promise.resolve(parts.join(" — "));
                 }
 
                 function loadCandidates() {
@@ -323,7 +376,9 @@
                         renderCandidates(candidates || []);
                     }).catch(function (err) {
                         console.error("VodMovieFixer: impossibile caricare i candidati", err);
-                        list.textContent = "Impossibile caricare i candidati (vedi console del browser).";
+                        describeError(err).then(function (desc) {
+                            list.textContent = "Impossibile caricare i candidati — " + desc;
+                        });
                     });
                 }
 
@@ -402,7 +457,9 @@
                             renderResults(results || []);
                         }).catch(function (err) {
                             console.error("VodMovieFixer: ricerca TMDb fallita", err);
-                            resultsContainer.textContent = "Ricerca fallita (vedi console del browser).";
+                            describeError(err).then(function (desc) {
+                                resultsContainer.textContent = "Ricerca fallita — " + desc;
+                            });
                         });
                     }
 
@@ -460,7 +517,9 @@
                             }).catch(function (err) {
                                 console.error("VodMovieFixer: assegnazione fallita", err);
                                 assignButton.disabled = false;
-                                resultsContainer.insertAdjacentHTML("afterbegin", "<div class='fieldDescription'>Assegnazione fallita (vedi console del browser).</div>");
+                                describeError(err).then(function (desc) {
+                                    resultsContainer.insertAdjacentHTML("afterbegin", "<div class='fieldDescription'>Assegnazione fallita — " + escapeHtml(desc) + "</div>");
+                                });
                             });
                         });
                         row.appendChild(assignButton);

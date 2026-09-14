@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
@@ -94,6 +95,58 @@ public class TmdbClient
         return isMovie ? TmdbMovieCheckResult.Movie : TmdbMovieCheckResult.Series;
     }
 
+    /// <summary>
+    /// Ricerca "grezza" su TMDb (solo film), usata dalla UI di assegnazione manuale per far scegliere
+    /// all'amministratore il film corretto quando il rilevamento automatico non trova una corrispondenza.
+    /// </summary>
+    /// <param name="query">Testo da cercare.</param>
+    /// <param name="year">Anno, se noto (opzionale).</param>
+    /// <param name="cancellationToken">Token di cancellazione.</param>
+    /// <returns>I primi risultati TMDb, ordinati per popolarità.</returns>
+    public async Task<IReadOnlyList<TmdbMovieResult>> SearchMoviesAsync(string query, int? year, CancellationToken cancellationToken)
+    {
+        var apiKey = Plugin.Instance?.Configuration.TmdbApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(query))
+        {
+            return Array.Empty<TmdbMovieResult>();
+        }
+
+        var url = $"search/movie?api_key={Uri.EscapeDataString(apiKey)}&query={Uri.EscapeDataString(query)}&include_adult=false";
+        if (year.HasValue)
+        {
+            url += $"&year={year.Value}";
+        }
+
+        try
+        {
+            var response = await _httpClient.GetFromJsonAsync<TmdbSearchResponse>(url, cancellationToken).ConfigureAwait(false);
+            return (response?.Results ?? Array.Empty<TmdbSearchItem>())
+                .OrderByDescending(r => r.Popularity)
+                .Take(12)
+                .Select(r => new TmdbMovieResult
+                {
+                    Id = r.Id,
+                    Title = r.DisplayTitle,
+                    Year = ParseYear(r.ReleaseDate),
+                    PosterUrl = string.IsNullOrEmpty(r.PosterPath) ? null : "https://image.tmdb.org/t/p/w92" + r.PosterPath,
+                    Popularity = r.Popularity
+                })
+                .ToList();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException)
+        {
+            _logger.LogWarning(ex, "Ricerca manuale TMDb fallita per '{Query}'.", query);
+            return Array.Empty<TmdbMovieResult>();
+        }
+    }
+
+    private static int? ParseYear(string? releaseDate)
+    {
+        return !string.IsNullOrEmpty(releaseDate) && releaseDate.Length >= 4 && int.TryParse(releaseDate.AsSpan(0, 4), out var y)
+            ? y
+            : null;
+    }
+
     private async Task<TmdbSearchItem?> SearchBestAsync(string apiKey, string endpoint, string yearParamName, string title, int? year, CancellationToken cancellationToken)
     {
         var best = await SearchAsync(apiKey, endpoint, yearParamName, title, year, cancellationToken).ConfigureAwait(false);
@@ -166,17 +219,57 @@ public class TmdbClient
 
     private sealed class TmdbSearchItem
     {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+
         [JsonPropertyName("title")]
         public string? Title { get; set; }
 
         [JsonPropertyName("name")]
         public string? Name { get; set; }
 
+        [JsonPropertyName("release_date")]
+        public string? ReleaseDate { get; set; }
+
+        [JsonPropertyName("poster_path")]
+        public string? PosterPath { get; set; }
+
         [JsonPropertyName("popularity")]
         public double Popularity { get; set; }
 
         public string DisplayTitle => Title ?? Name ?? string.Empty;
     }
+}
+
+/// <summary>
+/// Un risultato di ricerca film su TMDb, per la UI di assegnazione manuale.
+/// </summary>
+public class TmdbMovieResult
+{
+    /// <summary>
+    /// Gets or sets l'id TMDb del film.
+    /// </summary>
+    public int Id { get; set; }
+
+    /// <summary>
+    /// Gets or sets il titolo del film.
+    /// </summary>
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets l'anno di uscita, se noto.
+    /// </summary>
+    public int? Year { get; set; }
+
+    /// <summary>
+    /// Gets or sets l'URL della locandina in miniatura, se disponibile.
+    /// </summary>
+    public string? PosterUrl { get; set; }
+
+    /// <summary>
+    /// Gets or sets la popolarità TMDb del risultato.
+    /// </summary>
+    public double Popularity { get; set; }
 }
 
 /// <summary>

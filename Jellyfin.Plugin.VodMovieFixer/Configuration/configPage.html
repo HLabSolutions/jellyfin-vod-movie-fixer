@@ -93,6 +93,22 @@
                         background-color:rgba(128,128,128,0.08);
                     ">Nessun log caricato. Premi "Aggiorna log" o "Esegui ora".</pre>
                 </div>
+
+                <div class="verticalSection" style="margin-top:2em;">
+                    <h2>Assegnazione manuale</h2>
+                    <p class="fieldDescription">
+                        Elenco delle "serie" con 1 sola stagione/episodio per cui il rilevamento automatico su
+                        TMDb non ha trovato (o non ha confermato) una corrispondenza come film. Cerca il titolo
+                        giusto e assegnalo manualmente: il file .strm non viene spostato, viene solo corretta
+                        l'identificazione in Jellyfin.
+                    </p>
+                    <div>
+                        <button is="emby-button" type="button" id="LoadCandidatesButton" class="raised emby-button">
+                            <span>Trova candidati da assegnare</span>
+                        </button>
+                    </div>
+                    <div id="CandidatesList" style="margin-top:1em;"></div>
+                </div>
             </div>
         </div>
         <script>
@@ -290,6 +306,187 @@
 
                 document.querySelector("#RefreshLogButton").addEventListener("click", function () {
                     refreshLog();
+                });
+
+                function pluginUrl(path, params) {
+                    return ApiClient.getUrl(path, params);
+                }
+
+                function loadCandidates() {
+                    var list = getPage().querySelector("#CandidatesList");
+                    list.textContent = "Ricerca candidati in corso... (interroga TMDb per ogni elemento, può richiedere qualche secondo)";
+                    return ApiClient.ajax({
+                        type: "GET",
+                        url: pluginUrl("VodMovieFixer/Candidates"),
+                        dataType: "json"
+                    }).then(function (candidates) {
+                        renderCandidates(candidates || []);
+                    }).catch(function (err) {
+                        console.error("VodMovieFixer: impossibile caricare i candidati", err);
+                        list.textContent = "Impossibile caricare i candidati (vedi console del browser).";
+                    });
+                }
+
+                function renderCandidates(candidates) {
+                    var list = getPage().querySelector("#CandidatesList");
+                    list.innerHTML = "";
+
+                    if (!candidates.length) {
+                        list.textContent = "Nessun candidato da assegnare manualmente al momento.";
+                        return;
+                    }
+
+                    candidates.forEach(function (candidate) {
+                        list.appendChild(buildCandidateCard(candidate));
+                    });
+                }
+
+                function buildCandidateCard(candidate) {
+                    var card = document.createElement("div");
+                    card.className = "verticalSection";
+                    card.style.border = "1px solid rgba(128,128,128,0.4)";
+                    card.style.borderRadius = "4px";
+                    card.style.padding = "0.8em";
+                    card.style.marginBottom = "0.8em";
+
+                    var title = document.createElement("div");
+                    title.innerHTML = "<strong>" + escapeHtml(candidate.Name) + "</strong>" + (candidate.Year ? " (" + candidate.Year + ")" : "");
+                    card.appendChild(title);
+
+                    var path = document.createElement("div");
+                    path.className = "fieldDescription";
+                    path.style.wordBreak = "break-all";
+                    path.textContent = candidate.EpisodePath || "";
+                    card.appendChild(path);
+
+                    var searchRow = document.createElement("div");
+                    searchRow.style.display = "flex";
+                    searchRow.style.gap = "0.5em";
+                    searchRow.style.marginTop = "0.5em";
+                    searchRow.style.flexWrap = "wrap";
+
+                    var queryInput = document.createElement("input");
+                    queryInput.is = "emby-input";
+                    queryInput.setAttribute("is", "emby-input");
+                    queryInput.type = "text";
+                    queryInput.value = candidate.Name || "";
+                    queryInput.style.flex = "1 1 auto";
+                    queryInput.style.minWidth = "10em";
+
+                    var searchButton = document.createElement("button");
+                    searchButton.setAttribute("is", "emby-button");
+                    searchButton.type = "button";
+                    searchButton.className = "raised emby-button";
+                    searchButton.innerHTML = "<span>Cerca su TMDb</span>";
+
+                    searchRow.appendChild(queryInput);
+                    searchRow.appendChild(searchButton);
+                    card.appendChild(searchRow);
+
+                    var resultsContainer = document.createElement("div");
+                    resultsContainer.style.marginTop = "0.6em";
+                    card.appendChild(resultsContainer);
+
+                    function doSearch() {
+                        var query = queryInput.value.trim();
+                        if (!query) {
+                            return;
+                        }
+
+                        resultsContainer.textContent = "Ricerca in corso...";
+                        ApiClient.ajax({
+                            type: "GET",
+                            url: pluginUrl("VodMovieFixer/TmdbSearch", { query: query, year: candidate.Year || "" }),
+                            dataType: "json"
+                        }).then(function (results) {
+                            renderResults(results || []);
+                        }).catch(function (err) {
+                            console.error("VodMovieFixer: ricerca TMDb fallita", err);
+                            resultsContainer.textContent = "Ricerca fallita (vedi console del browser).";
+                        });
+                    }
+
+                    function renderResults(results) {
+                        resultsContainer.innerHTML = "";
+                        if (!results.length) {
+                            resultsContainer.textContent = "Nessun risultato TMDb per questa ricerca.";
+                            return;
+                        }
+
+                        results.forEach(function (result) {
+                            resultsContainer.appendChild(buildResultRow(result));
+                        });
+                    }
+
+                    function buildResultRow(result) {
+                        var row = document.createElement("div");
+                        row.style.display = "flex";
+                        row.style.alignItems = "center";
+                        row.style.gap = "0.6em";
+                        row.style.padding = "0.3em 0";
+                        row.style.borderTop = "1px solid rgba(128,128,128,0.2)";
+
+                        if (result.PosterUrl) {
+                            var img = document.createElement("img");
+                            img.src = result.PosterUrl;
+                            img.style.width = "40px";
+                            img.style.height = "60px";
+                            img.style.objectFit = "cover";
+                            img.style.borderRadius = "2px";
+                            row.appendChild(img);
+                        }
+
+                        var label = document.createElement("span");
+                        label.style.flex = "1 1 auto";
+                        label.textContent = result.Title + (result.Year ? " (" + result.Year + ")" : "");
+                        row.appendChild(label);
+
+                        var assignButton = document.createElement("button");
+                        assignButton.setAttribute("is", "emby-button");
+                        assignButton.type = "button";
+                        assignButton.className = "raised button-submit emby-button";
+                        assignButton.innerHTML = "<span>Usa questo</span>";
+                        assignButton.addEventListener("click", function () {
+                            assignButton.disabled = true;
+                            ApiClient.ajax({
+                                type: "POST",
+                                url: pluginUrl("VodMovieFixer/Assign"),
+                                data: JSON.stringify({ SeriesId: candidate.SeriesId, TmdbId: result.Id }),
+                                contentType: "application/json"
+                            }).then(function () {
+                                card.remove();
+                                setStatus("'" + candidate.Name + "' assegnato a '" + result.Title + "'.");
+                                refreshLog();
+                            }).catch(function (err) {
+                                console.error("VodMovieFixer: assegnazione fallita", err);
+                                assignButton.disabled = false;
+                                resultsContainer.insertAdjacentHTML("afterbegin", "<div class='fieldDescription'>Assegnazione fallita (vedi console del browser).</div>");
+                            });
+                        });
+                        row.appendChild(assignButton);
+
+                        return row;
+                    }
+
+                    searchButton.addEventListener("click", doSearch);
+                    queryInput.addEventListener("keydown", function (e) {
+                        if (e.key === "Enter") {
+                            e.preventDefault();
+                            doSearch();
+                        }
+                    });
+
+                    return card;
+                }
+
+                function escapeHtml(text) {
+                    var div = document.createElement("div");
+                    div.textContent = text || "";
+                    return div.innerHTML;
+                }
+
+                document.querySelector("#LoadCandidatesButton").addEventListener("click", function () {
+                    loadCandidates();
                 });
             })();
         </script>

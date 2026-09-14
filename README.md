@@ -26,6 +26,8 @@ che come film.
    spostato, rinominato o toccato, viene modificata solo l'identificazione interna di
    Jellyfin. Subito dopo forza un refresh completo dei metadati del nuovo film (poster,
    trama, ecc.) tramite i provider film configurati sul server.
+4. Per i candidati che TMDb non conferma automaticamente come film, la pagina di
+   configurazione permette di **cercarli e assegnarli manualmente** uno per uno.
 
 ## Requisiti
 
@@ -65,7 +67,19 @@ Dashboard → Plugin → **VOD Movie Fixer**:
   parte da sola subito dopo che Jellyfin termina una scansione libreria.
 
 In alternativa (o in aggiunta) puoi lanciare il task **"Correggi film VOD classificati
-come serie"** manualmente da Dashboard → Programmazione attività → Libreria.
+come serie"** manualmente da Dashboard → Programmazione attività → Libreria, oppure con
+il pulsante **"Esegui ora"** direttamente nella pagina del plugin (che mostra anche un
+riquadro con le righe di log del plugin, senza dover andare a recuperarle altrove).
+
+### Assegnazione manuale
+
+Nella sezione **"Assegnazione manuale"** della pagina di configurazione, il pulsante
+**"Trova candidati da assegnare"** elenca le "serie" con 1 sola stagione/episodio per cui
+TMDb non ha confermato automaticamente una corrispondenza come film (titoli ambigui, poco
+popolari, o scritti in modo diverso dal titolo ufficiale). Per ciascuna puoi modificare il
+testo di ricerca, cercare su TMDb e scegliere con un click il film corretto tra i
+risultati: la conversione avviene subito, senza spostare il file `.strm`, e usa l'id TMDb
+scelto (non una nuova ricerca automatica) per recuperare i metadati corretti.
 
 ## Limitazioni note
 

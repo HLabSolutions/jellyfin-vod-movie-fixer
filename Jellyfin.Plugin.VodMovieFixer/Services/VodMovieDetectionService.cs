@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,6 +11,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.VodMovieFixer.Services;
@@ -18,7 +20,9 @@ namespace Jellyfin.Plugin.VodMovieFixer.Services;
 /// Logica principale: individua le "serie" con una sola stagione e un solo episodio (il pattern con cui
 /// alcuni provider IPTV/VOD espongono i film), le conferma su TMDb e, se confermate, sostituisce la voce
 /// Series/Season/Episode nella libreria di Jellyfin con una voce Movie che punta allo stesso file .strm
-/// (il file fisico non viene mai spostato né toccato).
+/// (il file fisico non viene mai spostato né toccato). Per i casi che il rilevamento automatico non riesce
+/// a confermare, espone <see cref="GetPendingCandidatesAsync"/> e <see cref="AssignMovieAsync"/> in modo
+/// che l'amministratore possa assegnare manualmente il film corretto dalla UI del plugin.
 /// </summary>
 public class VodMovieDetectionService
 {
@@ -60,18 +64,12 @@ public class VodMovieDetectionService
         {
             _logger.LogWarning(
                 "Nessuna libreria configurata (o nessun nome corrispondente a una libreria esistente): nessuna azione eseguita. " +
-                "Configura i nomi delle librerie in Dashboard > Plugin > VOD Movie Fixer.");
+                "Configura le librerie in Dashboard > Plugin > VOD Movie Fixer.");
             progress.Report(100);
             return 0;
         }
 
-        var seriesList = _libraryManager.GetItemList(new InternalItemsQuery
-        {
-            IncludeItemTypes = new[] { BaseItemKind.Series },
-            Recursive = true,
-            AncestorIds = folderIds.ToArray()
-        }).OfType<Series>().ToList();
-
+        var seriesList = GetSeriesInFolders(folderIds);
         _logger.LogInformation("Analisi di {Count} serie nelle librerie configurate...", seriesList.Count);
 
         var convertedCount = 0;
@@ -81,26 +79,19 @@ public class VodMovieDetectionService
             var series = seriesList[i];
             progress.Report(100.0 * i / Math.Max(seriesList.Count, 1));
 
-            var episode = GetSingleCandidateEpisodeOrNull(series);
-            if (episode is null)
+            var evaluation = await EvaluateSeriesAsync(series, cancellationToken).ConfigureAwait(false);
+            if (evaluation is null)
             {
                 continue;
             }
 
-            TmdbMovieCheckResult verdict;
-            try
-            {
-                verdict = await _tmdbClient.IsLikelyMovieAsync(series.Name, series.ProductionYear, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Verifica TMDb fallita per '{Name}', elemento saltato.", series.Name);
-                continue;
-            }
-
+            var (episode, verdict) = evaluation.Value;
             if (verdict != TmdbMovieCheckResult.Movie)
             {
-                _logger.LogDebug("'{Name}' ha un solo episodio ma non è stato confermato come film su TMDb ({Verdict}), saltato.", series.Name, verdict);
+                _logger.LogDebug(
+                    "'{Name}' ha un solo episodio ma non è stato confermato come film su TMDb ({Verdict}): disponibile per l'assegnazione manuale nella pagina del plugin.",
+                    series.Name,
+                    verdict);
                 continue;
             }
 
@@ -118,7 +109,7 @@ public class VodMovieDetectionService
 
             try
             {
-                await ConvertSeriesToMovieAsync(series, episode, cancellationToken).ConfigureAwait(false);
+                await ConvertSeriesToMovieAsync(series, episode, null, cancellationToken).ConfigureAwait(false);
                 convertedCount++;
             }
             catch (Exception ex)
@@ -130,6 +121,112 @@ public class VodMovieDetectionService
         progress.Report(100);
         _logger.LogInformation("Completato: {Count} elementi convertiti (o rilevati in simulazione).", convertedCount);
         return convertedCount;
+    }
+
+    /// <summary>
+    /// Ritorna le "serie" con 1 sola stagione/episodio per cui il rilevamento automatico su TMDb non ha
+    /// trovato (o non ha confermato) una corrispondenza come film, cosicché l'amministratore possa
+    /// assegnare manualmente il film corretto dalla UI del plugin.
+    /// </summary>
+    /// <param name="cancellationToken">Token di cancellazione.</param>
+    /// <returns>L'elenco dei candidati da rivedere manualmente.</returns>
+    public async Task<IReadOnlyList<PendingCandidate>> GetPendingCandidatesAsync(CancellationToken cancellationToken)
+    {
+        var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var folderIds = GetTargetFolderIds(config);
+        var result = new List<PendingCandidate>();
+        if (folderIds.Count == 0)
+        {
+            return result;
+        }
+
+        var seriesList = GetSeriesInFolders(folderIds);
+        foreach (var series in seriesList)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var evaluation = await EvaluateSeriesAsync(series, cancellationToken).ConfigureAwait(false);
+            if (evaluation is null)
+            {
+                continue;
+            }
+
+            var (episode, verdict) = evaluation.Value;
+            if (verdict == TmdbMovieCheckResult.Movie)
+            {
+                // Confermato in automatico: viene gestito dal task normale, non serve intervento manuale.
+                continue;
+            }
+
+            result.Add(new PendingCandidate
+            {
+                SeriesId = series.Id,
+                Name = series.Name,
+                Year = series.ProductionYear,
+                EpisodePath = episode.Path
+            });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Converte manualmente in film il candidato indicato, usando l'id TMDb scelto dall'amministratore
+    /// invece dell'euristica automatica.
+    /// </summary>
+    /// <param name="seriesId">Id della serie candidata.</param>
+    /// <param name="tmdbId">Id TMDb del film scelto manualmente.</param>
+    /// <param name="cancellationToken">Token di cancellazione.</param>
+    /// <returns>True se la conversione è avvenuta, false se il candidato non è più valido.</returns>
+    public async Task<bool> AssignMovieAsync(Guid seriesId, int tmdbId, CancellationToken cancellationToken)
+    {
+        if (_libraryManager.GetItemById(seriesId) is not Series series)
+        {
+            return false;
+        }
+
+        var episode = GetSingleCandidateEpisodeOrNull(series);
+        if (episode is null)
+        {
+            return false;
+        }
+
+        await ConvertSeriesToMovieAsync(series, episode, tmdbId, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private List<Series> GetSeriesInFolders(IReadOnlyList<Guid> folderIds)
+    {
+        return _libraryManager.GetItemList(new InternalItemsQuery
+        {
+            IncludeItemTypes = new[] { BaseItemKind.Series },
+            Recursive = true,
+            AncestorIds = folderIds.ToArray()
+        }).OfType<Series>().ToList();
+    }
+
+    /// <summary>
+    /// Se la serie ha esattamente 1 stagione e 1 episodio con un file reale associato (il pattern tipico
+    /// di un film esposto come serie), interroga TMDb e ritorna l'episodio insieme all'esito.
+    /// Ritorna null se la serie non corrisponde al pattern (quindi non è un candidato).
+    /// </summary>
+    private async Task<(Episode Episode, TmdbMovieCheckResult Verdict)?> EvaluateSeriesAsync(Series series, CancellationToken cancellationToken)
+    {
+        var episode = GetSingleCandidateEpisodeOrNull(series);
+        if (episode is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var verdict = await _tmdbClient.IsLikelyMovieAsync(series.Name, series.ProductionYear, cancellationToken).ConfigureAwait(false);
+            return (episode, verdict);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Verifica TMDb fallita per '{Name}', trattato come da assegnare manualmente.", series.Name);
+            return (episode, TmdbMovieCheckResult.Unknown);
+        }
     }
 
     /// <summary>
@@ -165,7 +262,7 @@ public class VodMovieDetectionService
         return episode;
     }
 
-    private async Task ConvertSeriesToMovieAsync(Series series, Episode episode, CancellationToken cancellationToken)
+    private async Task ConvertSeriesToMovieAsync(Series series, Episode episode, int? tmdbId, CancellationToken cancellationToken)
     {
         var parent = _libraryManager.GetItemById(series.ParentId);
         if (parent is null)
@@ -185,6 +282,13 @@ public class VodMovieDetectionService
             ParentId = series.ParentId,
             DateCreated = series.DateCreated
         };
+
+        if (tmdbId.HasValue)
+        {
+            // Assegnazione manuale: fissiamo l'id TMDb scelto dall'amministratore cosi' il refresh
+            // sottostante recupera esattamente quel film invece di rifare una ricerca per nome.
+            movie.SetProviderId(MetadataProvider.Tmdb, tmdbId.Value.ToString(CultureInfo.InvariantCulture));
+        }
 
         var seasons = _libraryManager.GetItemList(new InternalItemsQuery
         {
@@ -242,4 +346,31 @@ public class VodMovieDetectionService
 
         return ids;
     }
+}
+
+/// <summary>
+/// Una "serie" con 1 sola stagione/episodio che il rilevamento automatico non ha confermato come film,
+/// in attesa di assegnazione manuale dalla UI del plugin.
+/// </summary>
+public class PendingCandidate
+{
+    /// <summary>
+    /// Gets or sets l'id della serie nella libreria di Jellyfin.
+    /// </summary>
+    public Guid SeriesId { get; set; }
+
+    /// <summary>
+    /// Gets or sets il nome della serie (di norma coincide col titolo del film).
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets l'anno di produzione, se noto.
+    /// </summary>
+    public int? Year { get; set; }
+
+    /// <summary>
+    /// Gets or sets il percorso del file .strm dell'unico episodio.
+    /// </summary>
+    public string EpisodePath { get; set; } = string.Empty;
 }
